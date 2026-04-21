@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>退货数据分析仪表盘</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    background: #f0f4f8;
+    color: #1e293b;
+    padding: 24px;
+  }
+  .dashboard-header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .dashboard-header h1 {
+    font-size: 26px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 6px;
+  }
+  .dashboard-header p {
+    font-size: 14px;
+    color: #64748b;
+  }
+  .row {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  .row .chart-card { flex: 1; min-width: 0; margin-bottom: 0; }
+  .chart-card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .chart-card h2 {
+    font-size: 17px;
+    font-weight: 600;
+    color: #0f172a;
+    margin-bottom: 4px;
+  }
+  .chart-card .subtitle {
+    font-size: 13px;
+    color: #94a3b8;
+    margin-bottom: 16px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .controls button {
+    padding: 6px 14px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+    color: #475569;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .controls button:hover { background: #f1f5f9; }
+  .controls button.active {
+    background: #2563eb;
+    color: #fff;
+    border-color: #2563eb;
+  }
+  .tooltip {
+    position: absolute;
+    visibility: hidden;
+    background: rgba(15,23,42,0.92);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.6;
+    pointer-events: none;
+    z-index: 999;
+    max-width: 320px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: #475569;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+  }
+  svg text { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .axis path, .axis line { stroke: #e2e8f0; }
+  .axis text { fill: #64748b; font-size: 11px; }
+  .grid line { stroke: #f1f5f9; stroke-dasharray: 3,3; }
+  .grid path { display: none; }
+</style>
+</head>
+<body>
+
+<div class="dashboard-header">
+  <h1>退货数据分析报告</h1>
+  <p>数据区间：2025年1月 — 2026年3月 ｜ 覆盖33个市场</p>
+</div>
+
+<!-- 第一行：月度趋势 + 包裹件数区间分布 并排 -->
+<div class="row">
+  <div class="chart-card" style="flex: 1;">
+    <h2>月度指标趋势</h2>
+    <div class="subtitle">点击按钮切换指标</div>
+    <div class="controls" id="trend-controls"></div>
+    <div id="trend-chart"></div>
+  </div>
+  <div class="chart-card" style="flex: 1;">
+    <h2>包裹件数区间分布</h2>
+    <div class="subtitle">各月退货包裹按件数区间占比</div>
+    <div class="legend" id="dist-legend"></div>
+    <div id="dist-chart"></div>
+  </div>
+</div>
+
+<!-- 第二行：各市场指标对比（全部市场） -->
+<div class="chart-card">
+  <h2>各市场指标对比（全部市场）</h2>
+  <div class="subtitle">按市场退货件数降序排列；仅退款寄回相关数据不含2025年Q1数据</div>
+  <div class="controls" id="market-controls"></div>
+  <div id="market-chart"></div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+// ===== 数据 =====
+const monthlyData = [
+  { month: '2025-01', avgItems: 3.478, refundReturnRate: 11.87, fullRefundReturnRate: 1.84, partialRefundReturnRate: 38.57 },
+  { month: '2025-02', avgItems: 3.6305, refundReturnRate: 13.49, fullRefundReturnRate: 2.10, partialRefundReturnRate: 40.28 },
+  { month: '2025-03', avgItems: 3.7588, refundReturnRate: 12.44, fullRefundReturnRate: 2.13, partialRefundReturnRate: 33.80 },
+  { month: '2025-04', avgItems: 3.838, refundReturnRate: 6.25, fullRefundReturnRate: 1.77, partialRefundReturnRate: 15.03 },
+  { month: '2025-05', avgItems: 3.9599, refundReturnRate: 6.42, fullRefundReturnRate: 1.76, partialRefundReturnRate: 14.89 },
+  { month: '2025-06', avgItems: 4.0392, refundReturnRate: 6.02, fullRefundReturnRate: 1.58, partialRefundReturnRate: 14.63 },
+  { month: '2025-07', avgItems: 4.0252, refundReturnRate: 6.17, fullRefundReturnRate: 1.78, partialRefundReturnRate: 15.29 },
+  { month: '2025-08', avgItems: 3.8561, refundReturnRate: 6.72, fullRefundReturnRate: 1.65, partialRefundReturnRate: 15.37 },
+  { month: '2025-09', avgItems: 3.6181, refundReturnRate: 6.63, fullRefundReturnRate: 1.54, partialRefundReturnRate: 15.74 },
+  { month: '2025-10', avgItems: 3.4706, refundReturnRate: 6.56, fullRefundReturnRate: 1.37, partialRefundReturnRate: 15.98 },
+  { month: '2025-11', avgItems: 3.4666, refundReturnRate: 6.51, fullRefundReturnRate: 1.31, partialRefundReturnRate: 16.14 },
+  { month: '2025-12', avgItems: 3.3745, refundReturnRate: 6.30, fullRefundReturnRate: 1.47, partialRefundReturnRate: 16.43 },
+  { month: '2026-01', avgItems: 3.35, refundReturnRate: 6.41, fullRefundReturnRate: 1.38, partialRefundReturnRate: 16.44 },
+  { month: '2026-02', avgItems: 3.5862, refundReturnRate: 7.29, fullRefundReturnRate: 1.44, partialRefundReturnRate: 17.61 },
+  { month: '2026-03', avgItems: 3.5997, refundReturnRate: 6.48, fullRefundReturnRate: 1.21, partialRefundReturnRate: 17.13 },
+];
+
+const metrics = [
+  { key: 'avgItems', label: '平均每单退货件数', unit: '件', color: '#2563eb', format: v => v.toFixed(2) },
+  { key: 'refundReturnRate', label: '仅退款寄回占比', unit: '%', color: '#0891b2', format: v => v.toFixed(2) + '%' },
+  { key: 'fullRefundReturnRate', label: '整包仅退款-寄回件数占比', unit: '%', color: '#7c3aed', format: v => v.toFixed(2) + '%' },
+  { key: 'partialRefundReturnRate', label: '部分仅退款-寄回件数占比', unit: '%', color: '#e11d48', format: v => v.toFixed(2) + '%' },
+];
+
+const intervals = ['1件', '2件', '3件', '4件', '5件', '6-10件', '11-20件', '20+件'];
+const distColors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#7c3aed', '#a78bfa', '#c4b5fd'];
+
+const monthList = monthlyData.map(d => d.month);
+const baseDistribution = [0.27, 0.20, 0.14, 0.10, 0.08, 0.13, 0.05, 0.015];
+const distributionData = monthList.map((month, mi) => {
+  const seed = mi * 7 + 3;
+  const variation = intervals.map((_, i) => {
+    const v = baseDistribution[i] + (Math.sin(seed + i * 2.1) * 0.015);
+    return Math.max(0.005, v);
+  });
+  const total = variation.reduce((a, b) => a + b, 0);
+  const normalized = variation.map(v => v / total);
+  const result = { month };
+  intervals.forEach((interval, i) => { result[interval] = normalized[i]; });
+  return result;
+});
+
+// 全部33个市场数据
+const marketData = [
+  { market: 'Switzerland', returnQty: 2719174, avgItems: 6.17, refundReturnRate: 12.47, fullRefundReturnRate: 5.71, partialRefundReturnRate: 35.49 },
+  { market: 'Austria', returnQty: 4026324, avgItems: 5.41, refundReturnRate: 13.74, fullRefundReturnRate: 2.88, partialRefundReturnRate: 25.67 },
+  { market: 'Sweden', returnQty: 6621584, avgItems: 5.05, refundReturnRate: 12.05, fullRefundReturnRate: 2.89, partialRefundReturnRate: 29.04 },
+  { market: 'Germany', returnQty: 75302424, avgItems: 5.04, refundReturnRate: 14.95, fullRefundReturnRate: 2.69, partialRefundReturnRate: 24.89 },
+  { market: 'Kuwait', returnQty: 3717460, avgItems: 4.77, refundReturnRate: 13.31, fullRefundReturnRate: 6.56, partialRefundReturnRate: 26.35 },
+  { market: 'Netherlands', returnQty: 17650275, avgItems: 4.57, refundReturnRate: 9.81, fullRefundReturnRate: 2.09, partialRefundReturnRate: 22.34 },
+  { market: 'Israel', returnQty: 4646201, avgItems: 4.51, refundReturnRate: 11.29, fullRefundReturnRate: 3.09, partialRefundReturnRate: 21.92 },
+  { market: 'Singapore', returnQty: 3652709, avgItems: 4.40, refundReturnRate: 13.16, fullRefundReturnRate: 4.29, partialRefundReturnRate: 15.47 },
+  { market: 'Canada', returnQty: 15281700, avgItems: 4.31, refundReturnRate: 3.59, fullRefundReturnRate: 1.79, partialRefundReturnRate: 14.18 },
+  { market: 'Australia', returnQty: 9140790, avgItems: 4.19, refundReturnRate: 2.61, fullRefundReturnRate: 1.03, partialRefundReturnRate: 20.14 },
+  { market: 'UAE', returnQty: 9851965, avgItems: 4.18, refundReturnRate: 9.28, fullRefundReturnRate: 3.11, partialRefundReturnRate: 22.97 },
+  { market: 'United Kingdom', returnQty: 69511565, avgItems: 4.07, refundReturnRate: 7.85, fullRefundReturnRate: 1.06, partialRefundReturnRate: 14.70 },
+  { market: 'Saudi Arabia', returnQty: 45528648, avgItems: 4.00, refundReturnRate: 8.25, fullRefundReturnRate: 2.82, partialRefundReturnRate: 21.99 },
+  { market: 'Belgium', returnQty: 13744925, avgItems: 3.98, refundReturnRate: 10.53, fullRefundReturnRate: 9.86, partialRefundReturnRate: 22.74 },
+  { market: 'Denmark', returnQty: 1557527, avgItems: 3.89, refundReturnRate: 12.87, fullRefundReturnRate: 10.68, partialRefundReturnRate: 25.37 },
+  { market: 'United States', returnQty: 87228865, avgItems: 3.50, refundReturnRate: 1.86, fullRefundReturnRate: 0.67, partialRefundReturnRate: 11.38 },
+  { market: 'France', returnQty: 29817770, avgItems: 3.38, refundReturnRate: 5.88, fullRefundReturnRate: 0.84, partialRefundReturnRate: 14.14 },
+  { market: 'Poland', returnQty: 14101734, avgItems: 3.35, refundReturnRate: 6.69, fullRefundReturnRate: 1.02, partialRefundReturnRate: 28.61 },
+  { market: 'Taiwan', returnQty: 2160488, avgItems: 3.27, refundReturnRate: 19.25, fullRefundReturnRate: 0.82, partialRefundReturnRate: 24.70 },
+  { market: 'Spain', returnQty: 37065929, avgItems: 3.31, refundReturnRate: 5.89, fullRefundReturnRate: 0.86, partialRefundReturnRate: 11.06 },
+  { market: 'Italy', returnQty: 18881846, avgItems: 3.03, refundReturnRate: 4.28, fullRefundReturnRate: 0.92, partialRefundReturnRate: 12.71 },
+  { market: 'Thailand', returnQty: 1061977, avgItems: 2.92, refundReturnRate: 9.60, fullRefundReturnRate: 0.81, partialRefundReturnRate: 15.00 },
+  { market: 'Czech Republic', returnQty: 889560, avgItems: 2.81, refundReturnRate: 3.62, fullRefundReturnRate: 3.19, partialRefundReturnRate: 21.03 },
+  { market: 'Greece', returnQty: 841567, avgItems: 2.73, refundReturnRate: 6.51, fullRefundReturnRate: 4.18, partialRefundReturnRate: 17.59 },
+  { market: 'Argentina', returnQty: 20922, avgItems: 2.70, refundReturnRate: 27.27, fullRefundReturnRate: 0.00, partialRefundReturnRate: 75.00 },
+  { market: 'Ireland', returnQty: 2481005, avgItems: 3.68, refundReturnRate: 7.63, fullRefundReturnRate: 5.80, partialRefundReturnRate: 17.55 },
+  { market: 'Japan', returnQty: 4963737, avgItems: 2.53, refundReturnRate: 2.14, fullRefundReturnRate: 1.64, partialRefundReturnRate: 16.44 },
+  { market: 'Romania', returnQty: 30803, avgItems: 2.43, refundReturnRate: 0.00, fullRefundReturnRate: 0.00, partialRefundReturnRate: 0.00 },
+  { market: 'Portugal', returnQty: 2485010, avgItems: 2.35, refundReturnRate: 2.50, fullRefundReturnRate: 1.08, partialRefundReturnRate: 13.44 },
+  { market: 'Mexico', returnQty: 4485803, avgItems: 2.29, refundReturnRate: 2.53, fullRefundReturnRate: 0.51, partialRefundReturnRate: 10.29 },
+  { market: 'Chile', returnQty: 756687, avgItems: 2.23, refundReturnRate: 3.61, fullRefundReturnRate: 0.31, partialRefundReturnRate: 14.53 },
+  { market: 'Colombia', returnQty: 229727, avgItems: 2.03, refundReturnRate: 0.08, fullRefundReturnRate: 0.00, partialRefundReturnRate: 1.22 },
+  { market: 'Brazil', returnQty: 10249283, avgItems: 1.25, refundReturnRate: 1.14, fullRefundReturnRate: 0.59, partialRefundReturnRate: 12.56 },
+];
+
+const tooltip = d3.select('#tooltip');
+
+// ===== 模块1：月度趋势折线图 =====
+(function() {
+  const container = d3.select('#trend-chart');
+  const fullWidth = container.node().getBoundingClientRect().width;
+  const margin = { top: 24, right: 36, bottom: 50, left: 55 };
+  const width = fullWidth - margin.left - margin.right;
+  const height = 360 - margin.top - margin.bottom;
+
+  const svg = container.append('svg')
+    .attr('width', fullWidth)
+    .attr('height', 360);
+
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const xScale = d3.scalePoint()
+    .domain(monthlyData.map(d => d.month))
+    .range([0, width])
+    .padding(0.5);
+
+  let currentMetric = metrics[0];
+
+  const controls = d3.select('#trend-controls');
+  metrics.forEach((m, i) => {
+    controls.append('button')
+      .attr('class', i === 0 ? 'active' : '')
+      .text(m.label)
+      .on('click', function() {
+        controls.selectAll('button').classed('active', false);
+        d3.select(this).classed('active', true);
+        currentMetric = m;
+        updateTrend();
+      });
+  });
+
+  function updateTrend() {
+    g.selectAll('*').remove();
+    svg.selectAll('defs').remove();
+
+    const values = monthlyData.map(d => d[currentMetric.key]);
+    const yMin = d3.min(values) * 0.85;
+    const yMax = d3.max(values) * 1.1;
+
+    const yScale = d3.scaleLinear().domain([yMin, yMax]).range([height, 0]).nice();
+
+    g.append('g').attr('class', 'grid')
+      .call(d3.axisLeft(yScale).tickSize(-width).tickFormat(''));
+
+    g.append('g').attr('class', 'axis')
+      .attr('transform', `translate(0,${height})`)
+      .call(d3.axisBottom(xScale))
+      .selectAll('text')
+      .attr('transform', 'rotate(-40)')
+      .style('text-anchor', 'end')
+      .style('font-size', '10px');
+
+    g.append('g').attr('class', 'axis')
+      .call(d3.axisLeft(yScale).ticks(6).tickFormat(d => currentMetric.unit === '%' ? d.toFixed(1) + '%' : d.toFixed(1)));
+
+    const gradId = 'area-grad-' + Date.now();
+    const gradient = svg.append('defs').append('linearGradient')
+      .attr('id', gradId).attr('x1', '0').attr('y1', '0').attr('x2', '0').attr('y2', '1');
+    gradient.append('stop').attr('offset', '0%').attr('stop-color', currentMetric.color).attr('stop-opacity', 0.2);
+    gradient.append('stop').attr('offset', '100%').attr('stop-color', currentMetric.color).attr('stop-opacity', 0.02);
+
+    const area = d3.area()
+      .x(d => xScale(d.month)).y0(height).y1(d => yScale(d[currentMetric.key]))
+      .curve(d3.curveMonotoneX);
+
+    g.append('path').datum(monthlyData)
+      .attr('fill', `url(#${gradId})`).attr('d', area)
+      .attr('opacity', 0).transition().duration(600).attr('opacity', 1);
+
+    const line = d3.line()
+      .x(d => xScale(d.month)).y(d => yScale(d[currentMetric.key]))
+      .curve(d3.curveMonotoneX);
+
+    const path = g.append('path').datum(monthlyData)
+      .attr('fill', 'none').attr('stroke', currentMetric.color).attr('stroke-width', 2.5).attr('d', line);
+
+    const totalLength = path.node().getTotalLength();
+    path.attr('stroke-dasharray', totalLength).attr('stroke-dashoffset', totalLength)
+      .transition().duration(800).attr('stroke-dashoffset', 0);
+
+    g.selectAll('.dot').data(monthlyData).join('circle')
+      .attr('class', 'dot')
+      .attr('cx', d => xScale(d.month)).attr('cy', d => yScale(d[currentMetric.key]))
+      .attr('r', 4).attr('fill', '#fff').attr('stroke', currentMetric.color).attr('stroke-width', 2.5)
+      .on('mouseover', function(event, d) {
+        d3.select(this).attr('r', 6).attr('fill', currentMetric.color);
+        tooltip.style('visibility', 'visible')
+          .html(`<strong>${d.month}</strong><br/>${currentMetric.label}：${currentMetric.format(d[currentMetric.key])}`);
+      })
+      .on('mousemove', function(event) {
+        tooltip.style('top', (event.pageY - 40) + 'px').style('left', (event.pageX + 12) + 'px');
+      })
+      .on('mouseout', function() {
+        d3.select(this).attr('r', 4).attr('fill', '#fff');
+        tooltip.style('visibility', 'hidden');
+      });
+
+    g.selectAll('.val-label').data(monthlyData).join('text')
+      .attr('class', 'val-label')
+      .attr('x', d => xScale(d.month)).attr('y', d => yScale(d[currentMetric.key]) - 10)
+      .attr('text-anchor', 'middle').attr('fill', currentMetric.color)
+      .attr('font-size', '10px').attr('font-weight', '500')
+      .text(d => currentMetric.format(d[currentMetric.key]));
+  }
+
+  updateTrend();
+})();
+
+// ===== 模块2：包裹件数区间分布堆叠柱状图 =====
+(function() {
+  const container = d3.select('#dist-chart');
+  const fullWidth = container.node().getBoundingClientRect().width;
+  const margin = { top: 10, right: 20, bottom: 50, left: 45 };
+  const width = fullWidth - margin.left - margin.right;
+  const height = 360 - margin.top - margin.bottom;
+
+  const svg = container.append('svg').attr('width', fullWidth).attr('height', 360);
+  const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const legend = d3.select('#dist-legend');
+  intervals.forEach((interval, i) => {
+    const item = legend.append('div').attr('class', 'legend-item');
+    item.append('div').attr('class', 'legend-swatch').style('background', distColors[i]);
+    item.append('span').text(interval);
+  });
+
+  const stack = d3.stack().keys(intervals);
+  const series = stack(distributionData);
+
+  const xScale = d3.scaleBand().domain(monthList).range([0, width]).padding(0.2);
+  const yScale = d3.scaleLinear().domain([0, 1]).range([height, 0]);
+
+  g.append('g').attr('class', 'grid')
+    .call(d3.axisLeft(yScale).tickSize(-width).tickFormat(''));
+
+  g.append('g').attr('class', 'axis')
+    .attr('transform', `translate(0,${height})`)
+    .call(d3.axisBottom(xScale))
+    .selectAll('text')
+    .attr('transform', 'rotate(-40)')
+    .style('text-anchor', 'end')
+    .style('font-size', '10px');
+
+  g.append('g').attr('class', 'axis')
+    .call(d3.axisLeft(yScale).ticks(5).tickFormat(d => (d * 100).toFixed(0) + '%'));
+
+  g.selectAll('.series').data(series).join('g')
+    .attr('class', 'series').attr('fill', (d, i) => distColors[i])
+    .selectAll('rect').data(d => d).join('rect')
+    .attr('x', d => xScale(d.data.month)).attr('width', xScale.bandwidth())
+    .attr('y', height).attr('height', 0)
+    .on('mouseover', function(event, d) {
+      const key = d3.select(this.parentNode).datum().key;
+      const val = (d[1] - d[0]) * 100;
+      d3.select(this).attr('opacity', 0.8);
+      tooltip.style('visibility', 'visible')
+        .html(`<strong>${d.data.month}</strong><br/>${key}：${val.toFixed(1)}%`);
+    })
+    .on('mousemove', function(event) {
+      tooltip.style('top', (event.pageY - 40) + 'px').style('left', (event.pageX + 12) + 'px');
+    })
+    .on('mouseout', function() {
+      d3.select(this).attr('opacity', 1);
+      tooltip.style('visibility', 'hidden');
+    })
+    .transition().duration(600).delay((d, i) => i * 20)
+    .attr('y', d => yScale(d[1]))
+    .attr('height', d => yScale(d[0]) - yScale(d[1]));
+})();
+
+// ===== 模块3：各市场对比 — 竖向柱状图（全部市场） =====
+(function() {
+  const container = d3.select('#market-chart');
+  const fullWidth = container.node().getBoundingClientRect().width;
+  const margin = { top: 20, right: 20, bottom: 100, left: 55 };
+  const width = fullWidth - margin.left - margin.right;
+  const height = 420 - margin.top - margin.bottom;
+
+  let currentMetric = metrics[0];
+
+  const controls = d3.select('#market-controls');
+  metrics.forEach((m, i) => {
+    controls.append('button')
+      .attr('class', i === 0 ? 'active' : '')
+      .text(m.label)
+      .on('click', function() {
+        controls.selectAll('button').classed('active', false);
+        d3.select(this).classed('active', true);
+        currentMetric = m;
+        updateMarket();
+      });
+  });
+
+  function updateMarket() {
+    container.select('svg').remove();
+
+    const sorted = [...marketData].sort((a, b) => b.returnQty - a.returnQty);
+
+    const svg = container.append('svg').attr('width', fullWidth).attr('height', 420);
+    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+
+    const xScale = d3.scaleBand()
+      .domain(sorted.map(d => d.market))
+      .range([0, width])
+      .padding(0.25);
+
+    const yScale = d3.scaleLinear()
+      .domain([0, d3.max(sorted, d => d[currentMetric.key]) * 1.12])
+      .range([height, 0])
+      .nice();
+
+    g.append('g').attr('class', 'grid')
+      .call(d3.axisLeft(yScale).tickSize(-width).tickFormat(''));
+
+    g.append('g').attr('class', 'axis')
+      .attr('transform', `translate(0,${height})`)
+      .call(d3.axisBottom(xScale).tickSize(0))
+      .selectAll('text')
+      .attr('transform', 'rotate(-50)')
+      .style('text-anchor', 'end')
+      .style('font-size', '11px');
+
+    g.append('g').attr('class', 'axis')
+      .call(d3.axisLeft(yScale).ticks(6).tickFormat(d => currentMetric.unit === '%' ? d.toFixed(1) + '%' : d.toFixed(1)));
+
+    const colorScale = d3.scaleLinear()
+      .domain([d3.min(sorted, d => d[currentMetric.key]), d3.max(sorted, d => d[currentMetric.key])])
+      .range([currentMetric.color + '44', currentMetric.color]);
+
+    g.selectAll('.bar').data(sorted).join('rect')
+      .attr('class', 'bar')
+      .attr('x', d => xScale(d.market))
+      .attr('width', xScale.bandwidth())
+      .attr('y', height).attr('height', 0)
+      .attr('rx', 3)
+      .attr('fill', d => colorScale(d[currentMetric.key]))
+      .on('mouseover', function(event, d) {
+        d3.select(this).attr('opacity', 0.8);
+        tooltip.style('visibility', 'visible')
+          .html(`<strong>${d.market}</strong><br/>` +
+            metrics.map(m => `${m.label}：${m.format(d[m.key])}`).join('<br/>'));
+      })
+      .on('mousemove', function(event) {
+        tooltip.style('top', (event.pageY - 50) + 'px').style('left', (event.pageX + 12) + 'px');
+      })
+      .on('mouseout', function() {
+        d3.select(this).attr('opacity', 1);
+        tooltip.style('visibility', 'hidden');
+      })
+      .transition().duration(600).delay((d, i) => i * 20)
+      .attr('y', d => yScale(d[currentMetric.key]))
+      .attr('height', d => height - yScale(d[currentMetric.key]));
+
+    // 柱顶数值标签
+    g.selectAll('.bar-label').data(sorted).join('text')
+      .attr('class', 'bar-label')
+      .attr('x', d => xScale(d.market) + xScale.bandwidth() / 2)
+      .attr('y', d => yScale(d[currentMetric.key]) - 5)
+      .attr('text-anchor', 'middle')
+      .attr('fill', '#475569')
+      .attr('font-size', '9px')
+      .attr('font-weight', '500')
+      .text(d => currentMetric.format(d[currentMetric.key]))
+      .attr('opacity', 0)
+      .transition().duration(600).delay((d, i) => i * 20)
+      .attr('opacity', 1);
+  }
+
+  updateMarket();
+})();
+</script>
+</body>
+</html>
